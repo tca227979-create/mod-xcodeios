@@ -13,10 +13,15 @@ permissions:
 jobs:
   build-ios:
     name: Build IPA
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
+      - name: Show runner environment
+        run: |
+          sw_vers
+          xcodebuild -version || true
+          ls -d /Applications/Xcode*.app || true
       - name: Checkout repository with LFS
         uses: actions/checkout@v4
         with:
@@ -73,6 +78,7 @@ jobs:
             DEVELOPMENT_TEAM="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             ENABLE_BITCODE=NO \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: Package .app into .ipa
