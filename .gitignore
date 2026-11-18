@@ -3,8 +3,8 @@
 *.xcscmblueprint
 *.xccheckout
 *.moved-aside
-DerivedData/
-build/
-*.ipa
-*.dSYM.zip
-Payload/
+/DerivedData/
+/build/
+/*.ipa
+/*.dSYM.zip
+/Payload/
