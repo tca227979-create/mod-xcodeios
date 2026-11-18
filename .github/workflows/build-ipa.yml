@@ -1,0 +1,109 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build IPA
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Verify static libraries
+        shell: bash
+        run: |
+          ls -lh Libraries/libiPhone-lib.a Libraries/libil2cpp.a
+          if [ $(wc -c < Libraries/libiPhone-lib.a) -lt 1000000 ]; then
+            echo "::error::Libraries/libiPhone-lib.a looks like an unresolved LFS pointer!"
+            cat Libraries/libiPhone-lib.a
+            exit 1
+          fi
+
+      - name: Setup execution permissions
+        shell: bash
+        run: |
+          chmod +x process_symbols.sh 2>/dev/null || true
+          chmod -R +x Il2CppOutputProject/IL2CPP/build/ || true
+          find Il2CppOutputProject/IL2CPP -type f -name "il2cpp" -exec chmod +x {} + || true
+          find Il2CppOutputProject/IL2CPP -type f -name "bee_backend" -exec chmod +x {} + || true
+          find Il2CppOutputProject/IL2CPP -type f -name "UnityLinker" -exec chmod +x {} + || true
+          find . -maxdepth 2 -name "usymtool*" -exec chmod +x {} + 2>/dev/null || true
+
+      - name: Fix IL2CPP architecture paths if needed
+        shell: bash
+        run: |
+          cd Il2CppOutputProject/IL2CPP/build
+          if [ -d "deploy_x86_64" ] && [ ! -d "deploy_arm64" ]; then
+            cp -r deploy_x86_64 deploy_arm64
+          fi
+          if [ -d "deploy_arm64/bee_backend/mac-x64" ] && [ ! -d "deploy_arm64/bee_backend/mac-arm64" ]; then
+            mkdir -p deploy_arm64/bee_backend/mac-arm64
+            cp -r deploy_arm64/bee_backend/mac-x64/* deploy_arm64/bee_backend/mac-arm64/ 2>/dev/null || true
+          fi
+
+      - name: Build Unity-iPhone (Release Unsigned)
+        shell: bash
+        run: |
+          set -o pipefail
+          rm -rf build Payload haitactuoitho_ios.ipa
+          mkdir -p build
+
+          xcodebuild build \
+            -project Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ENABLE_BITCODE=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package .app into .ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app bundle found in build/Build/Products/Release-iphoneos"
+            ls -la build/Build/Products/ || true
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -r -q haitactuoitho_ios.ipa Payload
+          ls -lh haitactuoitho_ios.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: haitactuoitho_ios_ipa
+          path: haitactuoitho_ios.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release with IPA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="ios-build-${{ github.run_number }}"
+          gh release create "$TAG" haitactuoitho_ios.ipa \
+            --title "haitactuoitho iOS IPA (#${{ github.run_number }})" \
+            --notes "Built from commit ${{ github.sha }}"
